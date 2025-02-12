@@ -21,7 +21,7 @@ const bodyAttribute = "data-page-body" as const;
 export const BodyNode = Node.create({
     name: BODY_NODE_NAME,
     group: "block",
-    content: "(block | ordered_list | bullet_list)+",
+    content: "block+ | list+",
     defining: true,
     isolating: false,
 
