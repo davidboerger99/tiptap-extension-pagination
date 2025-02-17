@@ -21,7 +21,7 @@ const bodyAttribute = "data-page-body" as const;
 export const BodyNode = Node.create({
     name: BODY_NODE_NAME,
     group: "block",
-    content: "block+ | list+",
+    content: "block+ | list+ | table+", // Allow all content types
     defining: true,
     isolating: false,
 

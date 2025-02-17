@@ -41,7 +41,7 @@ export const HEADER_DEFAULT_ATTRIBUTES: HeaderNodeAttributes = {
  */
 export const FOOTER_DEFAULT_ATTRIBUTES: FooterNodeAttributes = {
     type: "footer",
-    pageEndOffset: -10,
+    pageEndOffset: 10,
     ...HEADER_FOOTER_DEFAULT_ATTRIBUTES,
 };
 
