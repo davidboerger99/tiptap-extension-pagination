@@ -11,7 +11,7 @@ import { isNodeEmpty } from "../utils/nodes/node";
 import { doesDocHavePageNodes } from "../utils/nodes/page/page";
 
 const PaginationPlugin = new Plugin({
-    key: new PluginKey("pagination"),
+    key: new PluginKey("pagination-new-1234"),
     view() {
         let isPaginating = false;
 
