@@ -4,4 +4,6 @@
  * @description Pagination constants.
  */
 
-export const MIN_PARAGRAPH_HEIGHT = 40;
+export const PAGINATION_EXTENSION_NAME = "pagination" as const
+
+export const MIN_PARAGRAPH_HEIGHT = 40

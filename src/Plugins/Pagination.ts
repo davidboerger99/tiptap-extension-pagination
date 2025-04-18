@@ -4,43 +4,61 @@
  * @description Custom plugin for paginating the editor content.
  */
 
-import { Plugin, PluginKey, EditorState } from "@tiptap/pm/state";
-import { EditorView } from "@tiptap/pm/view";
-import { buildPageView } from "../utils/buildPageView";
-import { isNodeEmpty } from "../utils/nodes/node";
-import { doesDocHavePageNodes } from "../utils/nodes/page/page";
+import type { Editor } from "@tiptap/core"
+import { Plugin, PluginKey, type EditorState } from "@tiptap/pm/state"
+import type { EditorView } from "@tiptap/pm/view"
+import { buildPageView } from "../utils/buildPageView"
+import { isNodeEmpty } from "../utils/nodes/node"
+import { doesDocHavePageNodes } from "../utils/nodes/page/page"
+import type { PaginationOptions } from "../PaginationExtension"
 
-const PaginationPlugin = new Plugin({
-    key: new PluginKey("pagination-new-1234"),
+type PaginationPluginProps = {
+  editor: Editor
+  options: PaginationOptions
+}
+
+// Change this to a function declaration to fix the TypeScript error
+function createPaginationPlugin({ editor, options }: PaginationPluginProps): Plugin {
+  return new Plugin({
+    key: new PluginKey("pagination"),
     view() {
-        let isPaginating = false;
+      let isPaginating = false
 
-        return {
-            update(view: EditorView, prevState: EditorState) {
-                if (isPaginating) return;
+      return {
+        update(view: EditorView, prevState: EditorState) {
+          if (isPaginating) return
 
-                const { state } = view;
-                const { doc, schema } = state;
-                const pageType = schema.nodes.page;
+          const { state } = view
+          const { doc, schema } = state
+          const pageType = schema.nodes.page
 
-                if (!pageType) return;
+          if (!pageType) return
 
-                const docChanged = !doc.eq(prevState.doc);
-                const initialLoad = isNodeEmpty(prevState.doc) && !isNodeEmpty(doc);
-                const hasPageNodes = doesDocHavePageNodes(state);
+          const docChanged = !doc.eq(prevState.doc)
+          const initialLoad = isNodeEmpty(prevState.doc) && !isNodeEmpty(doc)
+          const hasPageNodes = doesDocHavePageNodes(state)
 
-                if (!docChanged && hasPageNodes && !initialLoad) return;
+          if (!docChanged && hasPageNodes && !initialLoad) return
 
-                isPaginating = true;
+          isPaginating = true
 
-                buildPageView(view);
-
-                // Reset paginating flag regardless of success or failure because we do not want to get
-                // stuck out of this loop.
-                isPaginating = false;
-            },
-        };
+          try {
+            // Pass the parameters as a single object to avoid parameter order issues
+            buildPageView({
+              editor,
+              view,
+              options,
+            })
+          } catch (error) {
+            console.error("Error in pagination:", error)
+          } finally {
+            // Reset paginating flag regardless of success or failure
+            isPaginating = false
+          }
+        },
+      }
     },
-});
+  })
+}
 
-export default PaginationPlugin;
+export default createPaginationPlugin

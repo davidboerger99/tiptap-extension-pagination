@@ -1,0 +1,28 @@
+/* Stile für Seitenzahlen */
+.page-number-container {
+    position: absolute !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    text-align: center !important;
+    padding: 4px 0 !important;
+    font-size: 0.85em !important;
+    color: #555 !important;
+    background-color: rgba(255, 255, 255, 0.8) !important;
+    border-top: 1px solid #ddd !important;
+    z-index: 10 !important;
+    pointer-events: none !important; /* Verhindert, dass die Seitenzahl Klicks blockiert */
+  }
+  
+  /* Spezifische Stile für linksbündige Seitenzahlen */
+  .page-number-container[data-position="left"] {
+    text-align: left !important;
+    padding-left: 10px !important;
+  }
+  
+  /* Stile für Footer-Container */
+  [data-page-header-footer][type="footer"] {
+    position: relative !important;
+    min-height: 30px !important; /* Stellen Sie sicher, dass genug Platz für die Seitenzahl vorhanden ist */
+  }
+  
