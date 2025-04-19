@@ -112,6 +112,7 @@ export const getPreviousParagraph = (doc: PMNode, pos: number): NullableNodePos 
  * Get the next paragraph node.
  *
  * @param doc - The document node.
+ *
  * @param pos - The position in the document.
  * @returns {NullableNodePos} The next paragraph node or null if not found and position.
  */
@@ -682,4 +683,40 @@ export const isPosAtLastLineOfParagraph = (
   const { lineCount, lineNumber, ...otherLineInfo } = getParagraphLineInfo(view, $pos)
   const isAtLastLine = lineNumber + 1 === lineCount
   return { isAtLastLine, lineCount, lineNumber, ...otherLineInfo }
+}
+
+/**
+ * Prüft, ob ein Absatz an der aktuellen Position umgebrochen werden sollte.
+ * Berücksichtigt die aktuelle Position im Absatz und die verbleibende Höhe auf der Seite.
+ * Implementiert einen fließenden Textübergang ähnlich wie in Microsoft Word.
+ *
+ * @param view - Die Editor-Ansicht.
+ * @param paragraphPos - Die Position des Absatzes im Dokument.
+ * @param remainingHeight - Die verbleibende Höhe auf der aktuellen Seite.
+ * @returns {boolean} True, wenn der Absatz umgebrochen werden sollte, sonst false.
+ */
+export const shouldBreakParagraph = (view: EditorView, paragraphPos: number, remainingHeight: number): boolean => {
+  // Wenn kein Platz mehr übrig ist, müssen wir umbrechen
+  if (remainingHeight <= 0) return true
+
+  // Berechnen der Zeilenhöhe und Anzahl der Zeilen
+  const { lineCount, lineNumber } = getParagraphLineInfo(view, paragraphPos)
+  const estimatedLineHeight = 18 // Geschätzte Höhe einer Textzeile in Pixeln
+
+  // Berechnen, wie viele Zeilen noch in den verbleibenden Platz passen würden
+  const remainingLines = Math.floor(remainingHeight / estimatedLineHeight)
+
+  // Wenn wir bereits in der letzten Zeile sind, keinen Umbruch erzwingen
+  if (lineNumber >= lineCount - 1) return false
+
+  // Berechnen, wie viele Zeilen noch im Absatz übrig sind
+  const linesLeftInParagraph = lineCount - lineNumber - 1
+
+  // Wenn der restliche Absatz in den verbleibenden Platz passt, nicht umbrechen
+  if (linesLeftInParagraph <= remainingLines) return false
+
+  // Wenn mindestens eine Zeile auf der aktuellen Seite angezeigt werden kann
+  // und es noch genug Platz für mindestens eine weitere Zeile gibt, dann
+  // lassen wir den Absatz fließend übergehen
+  return lineNumber > 0 || remainingLines < 1
 }

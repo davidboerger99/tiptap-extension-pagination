@@ -33,9 +33,9 @@ import { isHeaderFooterNode } from "./nodes/headerFooter/headerFooter"
 import { isBodyNode } from "./nodes/body/body"
 import type { Editor } from "@tiptap/core"
 import { TextSelection } from "@tiptap/pm/state"
+import { shouldBreakParagraph } from "./nodes/paragraph"
 
-// Konstanten für die Paginierung
-const PAGING_BUFFER = 20 // Größerer Puffer für proaktivere Paginierung
+// Konstanten für die Paginierung anpassen
 const CURSOR_MAPPING_ATTEMPTS = 3 // Anzahl der Versuche für die Cursor-Zuordnung
 
 // Vollständig überarbeitete buildPageView-Funktion
@@ -43,10 +43,12 @@ export const buildPageView = ({
   editor,
   view,
   options,
+  isPasteOperation = false,
 }: {
   editor: Editor
   view: EditorView
   options: PaginationOptions
+  isPasteOperation?: boolean
 }): void => {
   const { state } = view
   const { doc } = state
@@ -63,7 +65,7 @@ export const buildPageView = ({
     const nodeHeights = measureNodeHeights(view, contentNodes)
 
     // Erstellen des neuen Dokuments mit proaktiver Paginierung
-    const { newDoc, oldToNewPosMap } = buildNewDocument(editor, options, contentNodes, nodeHeights, PAGING_BUFFER)
+    const { newDoc, oldToNewPosMap } = buildNewDocument(editor, options, contentNodes, nodeHeights, isPasteOperation)
 
     // Vergleichen der Dokumente und Anwenden der Änderungen, wenn nötig
     if (!newDoc.content.eq(doc.content)) {
@@ -210,7 +212,7 @@ const measureNodeHeights = (view: EditorView, contentNodes: NodePosArray): numbe
       }
 
       // Fügen Sie einen kleinen Puffer hinzu, um sicherzustellen, dass wir genug Platz haben
-      return (height + marginTop) * 1.05 // 5% Puffer
+      return (height + marginTop) * 1.02 // Reduzierter Puffer für bessere Platznutzung
     }
 
     return MIN_PARAGRAPH_HEIGHT // Default to minimum height if DOM element is not found
@@ -226,7 +228,7 @@ const measureNodeHeights = (view: EditorView, contentNodes: NodePosArray): numbe
  * @param options - The pagination options.
  * @param contentNodes - The content nodes and their positions.
  * @param nodeHeights - The heights of the content nodes.
- * @param pagingBuffer - Buffer space to trigger pagination earlier.
+ * @param isPasteOperation - Whether this is a paste operation.
  * @returns {newDoc: PMNode, oldToNewPosMap: CursorMap} The new document and the mapping from old positions to new positions.
  */
 const buildNewDocument = (
@@ -234,7 +236,7 @@ const buildNewDocument = (
   options: PaginationOptions,
   contentNodes: NodePosArray,
   nodeHeights: number[],
-  pagingBuffer = 0,
+  isPasteOperation = false,
 ): { newDoc: PMNode; oldToNewPosMap: CursorMap } => {
   const { schema, doc } = editor.state
   const { pageAmendmentOptions } = options
@@ -309,18 +311,31 @@ const buildNewDocument = (
     const { node, pos: oldPos } = contentNodes[i]
     const nodeHeight = nodeHeights[i]
 
-    // Vorausschau: Prüfen, ob der aktuelle Knoten plus der nächste Knoten auf die Seite passen würde
-    const nextNodeHeight = i < contentNodes.length - 1 ? nodeHeights[i + 1] : 0
-    const wouldExceedWithNextNode =
-      currentHeight + nodeHeight + nextNodeHeight > bodyPixelDimensions.bodyHeight - pagingBuffer
+    // Verbesserte Paginierungslogik mit besserer Textumbruchbehandlung
+    const isPageFull = currentHeight + nodeHeight > bodyPixelDimensions.bodyHeight
+    let shouldBreakHere = false
 
-    // Proaktivere Paginierung: Neue Seite beginnen, wenn der aktuelle Knoten nicht passt oder
-    // wenn der aktuelle plus der nächste Knoten nicht passen würden
-    const isPageFull =
-      currentHeight + nodeHeight > bodyPixelDimensions.bodyHeight - pagingBuffer ||
-      (wouldExceedWithNextNode && nodeHeight < bodyPixelDimensions.bodyHeight * 0.5) // Nur wenn der aktuelle Knoten nicht zu groß ist
+    // Zusätzliche Prüfung für Absätze - nur wenn die Seite wirklich voll ist
+    if (isPageFull && isParagraphNode(node)) {
+      const remainingHeight = bodyPixelDimensions.bodyHeight - currentHeight
 
-    if (isPageFull && currentPageContent.length > 0) {
+      // Bei eingefügtem Text sind wir noch weniger aggressiv mit Umbrüchen
+      if (isPasteOperation) {
+        // Nur umbrechen, wenn absolut kein Platz mehr ist
+        shouldBreakHere = remainingHeight <= 0
+      } else {
+        // Verwenden der verbesserten shouldBreakParagraph-Funktion
+        shouldBreakHere = shouldBreakParagraph(editor.view, oldPos, remainingHeight)
+      }
+    } else if (isPageFull) {
+      // Für Nicht-Absatz-Knoten: Umbrechen, wenn die Seite voll ist
+      shouldBreakHere = true
+    }
+
+    if (shouldBreakHere && currentPageContent.length > 0) {
+      // Hier würden wir den Absatz teilen, wenn wir innerhalb eines Absatzes umbrechen
+      // Für jetzt fügen wir einfach den ganzen Absatz auf die nächste Seite ein
+
       const pageNode = addPage(currentPageContent)
       cumulativeNewDocPos += pageNode.nodeSize - getMaybeNodeSize(currentPageHeader)
       currentPageContent = []
@@ -445,6 +460,8 @@ const isNodeBeforeAvailable = ($pos: ResolvedPos): boolean => {
 
 /**
  * Check if the given position is at the end of a text block.
+ *
+ * @param $pos - The resolved position in the document.
  *
  * @param $pos - The resolved position in the document.
  * @returns {boolean} True if the position is at the end of a text block, false otherwise.

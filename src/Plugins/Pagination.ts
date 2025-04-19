@@ -27,6 +27,7 @@ function createPaginationPlugin({ editor, options }: PaginationPluginProps): Plu
   let consecutiveErrors = 0
   const MAX_CONSECUTIVE_ERRORS = 3
   let lastErrorTime = 0
+  let lastPasteTime = 0
 
   // Hilfsfunktion zum Zählen der Zeichen im Dokument
   const countCharsInDoc = (doc: any) => {
@@ -51,6 +52,7 @@ function createPaginationPlugin({ editor, options }: PaginationPluginProps): Plu
         return {
           lastPaginationTime: 0,
           pendingPagination: false,
+          wasPasted: false,
         }
       },
       apply(tr, pluginState) {
@@ -64,6 +66,17 @@ function createPaginationPlugin({ editor, options }: PaginationPluginProps): Plu
           return {
             lastPaginationTime: Date.now(),
             pendingPagination: false,
+            wasPasted: pluginState.wasPasted,
+          }
+        }
+
+        // Erkennen von Einfügeoperationen
+        if (tr.getMeta("paste")) {
+          lastPasteTime = Date.now()
+          return {
+            ...pluginState,
+            pendingPagination: true,
+            wasPasted: true,
           }
         }
 
@@ -107,10 +120,12 @@ function createPaginationPlugin({ editor, options }: PaginationPluginProps): Plu
           const initialLoad = isNodeEmpty(prevState.doc) && !isNodeEmpty(doc)
           const hasPageNodes = doesDocHavePageNodes(state)
           const docSizeChanged = currentDocSize !== lastDocSize
-          const charCountChanged = Math.abs(currentCharCount - lastCharCount) > 50 // Signifikante Änderung
+          const charCountChanged = Math.abs(currentCharCount - lastCharCount) > 20 // Empfindlicher auf Textänderungen reagieren
           const pendingPagination = pluginState?.pendingPagination
           const timeSinceLastPagination = Date.now() - (pluginState?.lastPaginationTime || 0)
           const timeSinceLastError = Date.now() - lastErrorTime
+          const wasPasted = pluginState?.wasPasted
+          const timeSinceLastPaste = Date.now() - lastPasteTime
 
           // Fehlerbehandlung: Wenn zu viele Fehler aufgetreten sind, Paginierung vorübergehend deaktivieren
           if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS && timeSinceLastError < 5000) {
@@ -122,10 +137,42 @@ function createPaginationPlugin({ editor, options }: PaginationPluginProps): Plu
             initialLoad ||
             (docChanged && !hasPageNodes) ||
             pendingPagination ||
-            (charCountChanged && timeSinceLastPagination > 500) // Mindestens 500ms seit letzter Paginierung
+            (charCountChanged && timeSinceLastPagination > 300) // Schnellere Reaktion auf Textänderungen
+
+          // Spezielle Behandlung für eingefügten Text
+          const needsPasteHandling = wasPasted && timeSinceLastPaste < 2000
+
+          if (needsPasteHandling) {
+            // Bei Einfügeoperationen warten wir etwas länger, um den Text besser zu verarbeiten
+            paginationTimer = window.setTimeout(() => {
+              if (!view.isDestroyed) {
+                isPaginating = true
+                try {
+                  const tr = view.state.tr
+                  buildPageView({
+                    editor,
+                    view,
+                    options,
+                    isPasteOperation: true,
+                  })
+                  tr.setMeta("paginationApplied", true)
+                  tr.setMeta("wasPasted", false)
+                  view.dispatch(tr)
+                  consecutiveErrors = 0
+                } catch (error) {
+                  console.error("Error in paste pagination:", error)
+                  consecutiveErrors++
+                  lastErrorTime = Date.now()
+                } finally {
+                  isPaginating = false
+                }
+              }
+            }, 100) // Kurze Verzögerung für bessere Verarbeitung von eingefügtem Text
+            return
+          }
 
           // Prüfen, ob eine verzögerte Paginierung erforderlich ist
-          const needsDelayedPagination = docSizeChanged && !needsImmediatePagination && timeSinceLastPagination > 200 // Mindestens 200ms seit letzter Paginierung
+          const needsDelayedPagination = docSizeChanged && !needsImmediatePagination && timeSinceLastPagination > 150
 
           // Aktualisieren der Tracking-Variablen
           lastDocSize = currentDocSize
@@ -147,10 +194,14 @@ function createPaginationPlugin({ editor, options }: PaginationPluginProps): Plu
                 editor,
                 view,
                 options,
+                isPasteOperation: needsPasteHandling,
               })
 
               // Setzen des paginationApplied-Flags
               tr.setMeta("paginationApplied", true)
+              if (needsPasteHandling) {
+                tr.setMeta("wasPasted", false)
+              }
               view.dispatch(tr)
 
               // Zurücksetzen des Fehlerzählers bei Erfolg
