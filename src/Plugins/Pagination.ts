@@ -17,15 +17,16 @@ type PaginationPluginProps = {
   options: PaginationOptions
 }
 
-// Vollständig überarbeitetes Paginierungs-Plugin
+// Verbessern Sie die Fehlerbehandlung im Pagination-Plugin
 function createPaginationPlugin({ editor, options }: PaginationPluginProps): Plugin {
-  // Konstante für die maximale Anzahl von Zeichen pro Seite (ungefährer Wert)
-
   // Tracking-Variablen für die Paginierung
   let isPaginating = false
   let lastDocSize = 0
   let lastCharCount = 0
   let paginationTimer: number | null = null
+  let consecutiveErrors = 0
+  const MAX_CONSECUTIVE_ERRORS = 3
+  let lastErrorTime = 0
 
   // Hilfsfunktion zum Zählen der Zeichen im Dokument
   const countCharsInDoc = (doc: any) => {
@@ -71,7 +72,7 @@ function createPaginationPlugin({ editor, options }: PaginationPluginProps): Plu
     },
 
     // Behandlung von Transaktionen vor dem Anwenden
-    appendTransaction(transactions, _, newState) {
+    appendTransaction(transactions, _oldState, newState) {
       // Prüfen, ob eine der Transaktionen eine Textänderung enthält
       const hasTextChanges = transactions.some((tr) =>
         tr.steps.some((step) => step.hasOwnProperty("from") && step.hasOwnProperty("to")),
@@ -109,6 +110,12 @@ function createPaginationPlugin({ editor, options }: PaginationPluginProps): Plu
           const charCountChanged = Math.abs(currentCharCount - lastCharCount) > 50 // Signifikante Änderung
           const pendingPagination = pluginState?.pendingPagination
           const timeSinceLastPagination = Date.now() - (pluginState?.lastPaginationTime || 0)
+          const timeSinceLastError = Date.now() - lastErrorTime
+
+          // Fehlerbehandlung: Wenn zu viele Fehler aufgetreten sind, Paginierung vorübergehend deaktivieren
+          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS && timeSinceLastError < 5000) {
+            return
+          }
 
           // Prüfen, ob eine Paginierung erforderlich ist
           const needsImmediatePagination =
@@ -145,8 +152,13 @@ function createPaginationPlugin({ editor, options }: PaginationPluginProps): Plu
               // Setzen des paginationApplied-Flags
               tr.setMeta("paginationApplied", true)
               view.dispatch(tr)
+
+              // Zurücksetzen des Fehlerzählers bei Erfolg
+              consecutiveErrors = 0
             } catch (error) {
               console.error("Error in immediate pagination:", error)
+              consecutiveErrors++
+              lastErrorTime = Date.now()
             } finally {
               isPaginating = false
             }
@@ -168,8 +180,13 @@ function createPaginationPlugin({ editor, options }: PaginationPluginProps): Plu
                   // Setzen des paginationApplied-Flags
                   tr.setMeta("paginationApplied", true)
                   view.dispatch(tr)
+
+                  // Zurücksetzen des Fehlerzählers bei Erfolg
+                  consecutiveErrors = 0
                 } catch (error) {
                   console.error("Error in delayed pagination:", error)
+                  consecutiveErrors++
+                  lastErrorTime = Date.now()
                 } finally {
                   isPaginating = false
                   paginationTimer = null

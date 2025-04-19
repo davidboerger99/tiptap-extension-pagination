@@ -48,12 +48,12 @@ export const buildPageView = ({
   view: EditorView
   options: PaginationOptions
 }): void => {
-  const { state, dispatch } = view
+  const { state } = view
   const { doc } = state
 
   try {
     // Speichern der aktuellen Cursor-Position und Selektion
-    const { tr, selection } = state
+    const { selection } = state
     const oldCursorPos = selection.from
     const oldCursorAnchor = selection.anchor
     const oldCursorHead = selection.head
@@ -67,6 +67,10 @@ export const buildPageView = ({
 
     // Vergleichen der Dokumente und Anwenden der Änderungen, wenn nötig
     if (!newDoc.content.eq(doc.content)) {
+      // Erstellen einer neuen Transaktion basierend auf dem aktuellen Zustand
+      // Dies ist wichtig, um sicherzustellen, dass die Transaktion mit dem aktuellen Zustand übereinstimmt
+      const tr = view.state.tr
+
       // Ersetzen des Dokuments
       tr.replaceWith(0, doc.content.size, newDoc.content)
       tr.setMeta("pagination", true)
@@ -87,11 +91,41 @@ export const buildPageView = ({
         }
       }
 
-      // Anwenden der Cursor-Position
-      enhancedCursorPositioning(tr, newCursorPos, oldCursorAnchor, oldCursorHead)
+      // Sicherstellen, dass die Cursor-Position gültig ist
+      if (newCursorPos !== null) {
+        // Begrenzen Sie die Position auf den gültigen Bereich
+        newCursorPos = Math.max(0, Math.min(newCursorPos, newDocContentSize - 1))
 
-      // Dispatch der Transaktion
-      dispatch(tr)
+        try {
+          // Anwenden der Cursor-Position
+          enhancedCursorPositioning(tr, newCursorPos, oldCursorAnchor, oldCursorHead)
+        } catch (error) {
+          console.warn("Error setting cursor position, using fallback", error)
+          // Fallback: Setzen Sie den Cursor an eine sichere Position
+          try {
+            const safePos = Math.min(newCursorPos, tr.doc.content.size - 1)
+            tr.setSelection(TextSelection.create(tr.doc, safePos))
+          } catch (e) {
+            console.warn("Fallback cursor positioning failed", e)
+          }
+        }
+      }
+
+      // Dispatch der Transaktion mit try-catch
+      try {
+        view.dispatch(tr)
+      } catch (dispatchError) {
+        console.error("Error dispatching pagination transaction:", dispatchError)
+        // Wenn die Transaktion fehlschlägt, versuchen wir eine einfachere Transaktion
+        try {
+          // Erstellen einer neuen, einfachen Transaktion
+          const simpleTransaction = view.state.tr
+          simpleTransaction.setMeta("pagination", true)
+          view.dispatch(simpleTransaction)
+        } catch (fallbackError) {
+          console.error("Fallback transaction also failed:", fallbackError)
+        }
+      }
     }
   } catch (error) {
     console.error("Error updating page view. Details:", error)

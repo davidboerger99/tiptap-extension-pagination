@@ -30,9 +30,71 @@ export const HeaderFooterNode = Node.create({
   content: "block+",
   defining: true,
   isolating: true,
+  editable: false,
 
   addAttributes() {
     return addNodeAttributes(HEADER_FOOTER_ATTRIBUTES)
+  },
+
+  // Verhindert das direkte Bearbeiten des Headers/Footers
+  addKeyboardShortcuts() {
+    return {
+      // Wir geben eine leere Funktion zurück, die nur true zurückgibt, wenn wir im Header/Footer sind
+      // Das verhindert die Standardaktion, ohne den gesamten Editor zu beeinflussen
+      Enter: ({ editor }) => {
+        // Prüfen, ob die aktuelle Auswahl im Header/Footer ist
+        const { selection } = editor.state
+        const $pos = selection.$from
+
+        // Überprüfen, ob wir uns in einem Header/Footer-Knoten befinden
+        let inHeaderFooter = false
+        for (let i = $pos.depth; i > 0; i--) {
+          const node = $pos.node(i)
+          if (node.type.name === HEADER_FOOTER_NODE_NAME) {
+            inHeaderFooter = true
+            break
+          }
+        }
+
+        // Nur blockieren, wenn wir im Header/Footer sind
+        return inHeaderFooter
+      },
+
+      // Ähnliche Logik für andere Tastenkombinationen
+      Backspace: ({ editor }) => {
+        const { selection } = editor.state
+        const $pos = selection.$from
+
+        let inHeaderFooter = false
+        for (let i = $pos.depth; i > 0; i--) {
+          const node = $pos.node(i)
+          if (node.type.name === HEADER_FOOTER_NODE_NAME) {
+            inHeaderFooter = true
+            break
+          }
+        }
+
+        return inHeaderFooter
+      },
+
+      Delete: ({ editor }) => {
+        const { selection } = editor.state
+        const $pos = selection.$from
+
+        let inHeaderFooter = false
+        for (let i = $pos.depth; i > 0; i--) {
+          const node = $pos.node(i)
+          if (node.type.name === HEADER_FOOTER_NODE_NAME) {
+            inHeaderFooter = true
+            break
+          }
+        }
+
+        return inHeaderFooter
+      },
+
+      // Weitere Tastenkombinationen können nach dem gleichen Muster hinzugefügt werden
+    }
   },
 
   parseHTML() {
@@ -82,8 +144,12 @@ export const HeaderFooterNode = Node.create({
       dom.style.overflow = "hidden"
       dom.style.position = "absolute"
       dom.style.boxSizing = "border-box"
+      dom.style.pointerEvents = "none" // Verhindert Mausinteraktionen
+      dom.style.userSelect = "none" // Verhindert Textauswahl
 
       const contentDOM = document.createElement(baseElement)
+      contentDOM.style.pointerEvents = "none" // Verhindert Mausinteraktionen im Inhalt
+      contentDOM.style.position = "relative"
       dom.appendChild(contentDOM)
 
       // Verbesserte Implementierung für Seitenzahlen

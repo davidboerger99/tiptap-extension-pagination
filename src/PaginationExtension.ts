@@ -48,6 +48,7 @@ import {
 import { setDocumentSideConfig, setDocumentSideValue, setPageSideConfig, setPageSideValue } from "./utils/setSideConfig"
 import { getPageRegionNodeAndPos } from "./utils/pageRegion/getAttributes"
 import { isHeaderFooterNode } from "./utils/nodes/headerFooter/headerFooter"
+import { DEFAULT_PAGE_NUMBER_OPTIONS } from "./constants/pageRegions"
 
 export interface PaginationOptions {
   /**
@@ -308,6 +309,23 @@ declare module "@tiptap/core" {
         options: Partial<PageNumberOptions>,
         region?: "header" | "footer",
       ) => ReturnType
+
+      /**
+       * Setzt den Inhalt des Headers oder Footers für das gesamte Dokument.
+       *
+       * @param content - Der HTML-Inhalt, der eingefügt werden soll
+       * @param region - Die Region, in die der Inhalt eingefügt werden soll (header oder footer)
+       */
+      setDocumentHeaderFooterContent: (content: string, region: "header" | "footer") => ReturnType
+
+      /**
+       * Setzt den Inhalt des Headers oder Footers für eine bestimmte Seite.
+       *
+       * @param pageNum - Die Seitennummer (0-indexiert)
+       * @param content - Der HTML-Inhalt, der eingefügt werden soll
+       * @param region - Die Region, in die der Inhalt eingefügt werden soll (header oder footer)
+       */
+      setPageHeaderFooterContent: (pageNum: number, content: string, region: "header" | "footer") => ReturnType
     }
   }
 }
@@ -519,7 +537,13 @@ const PaginationExtension = Extension.create<PaginationOptions>({
         ({ tr, dispatch }) => {
           if (!dispatch) return false
 
-          // Update all header/footer nodes of the specified type
+          // Stellen Sie sicher, dass die show-Eigenschaft explizit auf true gesetzt ist
+          const updatedOptions = {
+            ...options,
+            show: options.show !== undefined ? options.show : true,
+          }
+
+          // Aktualisieren Sie alle Header/Footer-Knoten des angegebenen Typs
           let updated = false
           tr.doc.forEach((node, pos) => {
             if (isPageNode(node)) {
@@ -528,8 +552,11 @@ const PaginationExtension = Extension.create<PaginationOptions>({
                   const headerFooterType = childNode.attrs[HEADER_FOOTER_NODE_ATTR_KEYS.type]
                   if (headerFooterType === region) {
                     const headerFooterPos = pos + childOffset + 1
-                    const currentPageNumber = childNode.attrs[HEADER_FOOTER_NODE_ATTR_KEYS.pageNumber] || {}
-                    const newPageNumber = { ...currentPageNumber, ...options }
+
+                    // Aktualisieren Sie die pageNumber-Attribute
+                    const currentPageNumber =
+                      childNode.attrs[HEADER_FOOTER_NODE_ATTR_KEYS.pageNumber] || DEFAULT_PAGE_NUMBER_OPTIONS
+                    const newPageNumber = { ...currentPageNumber, ...updatedOptions }
 
                     tr.setNodeAttribute(headerFooterPos, HEADER_FOOTER_NODE_ATTR_KEYS.pageNumber, newPageNumber)
                     updated = true
@@ -542,6 +569,7 @@ const PaginationExtension = Extension.create<PaginationOptions>({
           if (updated) {
             dispatch(tr)
           }
+
           return updated
         },
 
@@ -567,6 +595,87 @@ const PaginationExtension = Extension.create<PaginationOptions>({
           const newPageNumber = { ...currentPageNumber, ...options }
 
           tr.setNodeAttribute(headerFooterPos, HEADER_FOOTER_NODE_ATTR_KEYS.pageNumber, newPageNumber)
+          dispatch(tr)
+          return true
+        },
+
+      setDocumentHeaderFooterContent:
+        (content: string, region: "header" | "footer") =>
+        ({ tr, dispatch }) => {
+          if (!dispatch) return false
+
+          let updated = false
+          tr.doc.forEach((node, pos) => {
+            if (isPageNode(node)) {
+              node.forEach((childNode, childOffset) => {
+                if (isHeaderFooterNode(childNode)) {
+                  const headerFooterType = childNode.attrs[HEADER_FOOTER_NODE_ATTR_KEYS.type]
+                  if (headerFooterType === region) {
+                    const headerFooterPos = pos + childOffset + 1
+
+                    // Parse HTML-Inhalt
+                    const parser = new DOMParser()
+                    const dom = parser.parseFromString(content, "text/html")
+                    const fragment = tr.doc.type.schema.nodeFromJSON({
+                      type: "doc",
+                      content: [
+                        {
+                          type: "paragraph",
+                          content: [{ type: "text", text: dom.body.textContent || "" }],
+                        },
+                      ],
+                    }).content
+
+                    // Ersetze den Inhalt des Header/Footer-Knotens
+                    tr.replaceWith(headerFooterPos + 1, headerFooterPos + childNode.content.size + 1, fragment)
+                    updated = true
+                  }
+                }
+              })
+            }
+          })
+
+          if (updated) {
+            dispatch(tr)
+          }
+
+          return updated
+        },
+
+      setPageHeaderFooterContent:
+        (pageNum: number, content: string, region: "header" | "footer") =>
+        ({ tr, dispatch }) => {
+          if (!dispatch) return false
+
+          const { doc } = tr
+          const pageNodePos = getPageNodePosByPageNum(doc, pageNum)
+          if (!pageNodePos) {
+            return false
+          }
+
+          const { pos: pagePos, node: pageNode } = pageNodePos
+          const { node: headerFooterNode, pos: headerFooterPos } = getPageRegionNodeAndPos(pagePos, pageNode, region)
+
+          if (!headerFooterNode || !isHeaderFooterNode(headerFooterNode)) {
+            return false
+          }
+
+          // Parse HTML-Inhalt
+          const parser = new DOMParser()
+          const dom = parser.parseFromString(content, "text/html")
+          const fragment = tr.doc.type.schema.nodeFromJSON({
+            type: "doc",
+            content: [
+              {
+                type: "paragraph",
+                content: [{ type: "text", text: dom.body.textContent || "" }],
+              },
+            ],
+          }).content
+
+          // Ersetze den Inhalt des Header/Footer-Knotens
+          tr.replaceWith(headerFooterPos + 1, headerFooterPos + headerFooterNode.content.size + 1, fragment)
+
           dispatch(tr)
           return true
         },
