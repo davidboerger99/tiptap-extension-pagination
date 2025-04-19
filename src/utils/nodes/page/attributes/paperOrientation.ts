@@ -39,7 +39,7 @@ export const getPageNumPaperOrientation = (editor: Editor, pageNum: number): Pap
   getPageAttributeByPageNum(
     editor.state,
     pageNum,
-    () => getPaginationExtensionOptions(editor).defaultPaperOrientation,
+    getPaginationExtensionOptions(editor).defaultPaperOrientation,
     getPageNodePaperOrientation,
   )
 

@@ -136,7 +136,7 @@ export const getPageNumPaperSize = (editor: Editor, pageNum: number): PaperSize 
   getPageAttributeByPageNum(
     editor.state,
     pageNum,
-    () => getPaginationExtensionOptions(editor).defaultPaperSize,
+    getPaginationExtensionOptions(editor).defaultPaperSize,
     getPageNodePaperSize,
   )
 

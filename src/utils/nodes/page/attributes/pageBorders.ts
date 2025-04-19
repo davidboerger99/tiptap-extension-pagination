@@ -76,7 +76,7 @@ export const getPageNumPageBorders = (editor: Editor, pageNum: number): BorderCo
   getPageAttributeByPageNum(
     editor.state,
     pageNum,
-    () => getPaginationExtensionOptions(editor).defaultPageBorders,
+    getPaginationExtensionOptions(editor).defaultPageBorders,
     getPageNodePageBorders,
   )
 
