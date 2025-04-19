@@ -51,6 +51,7 @@ import {
   isPosAtStartOfPageAmendment,
 } from "../utils/nodes/headerFooter/headerFooterCondition"
 
+// Verbesserte Keymap mit sofortiger Paginierungsauslösung
 const KeymapPlugin = keymap({
   ArrowLeft: (state, dispatch) => {
     if (!dispatch) {
@@ -372,6 +373,10 @@ const KeymapPlugin = keymap({
 
     const newSelection = moveToNextTextBlock(tr, from)
     setSelection(tr, newSelection)
+
+    // Sofortige Paginierung auslösen
+    tr.setMeta("needsPagination", true)
+
     dispatch(tr)
     return true
   },
@@ -473,6 +478,9 @@ const KeymapPlugin = keymap({
 
       // Set the selection to the end of the previous paragraph
       setSelectionToEndOfParagraph(tr, previousParagraphPos, previousParagraphNode)
+
+      // Sofortige Paginierung auslösen
+      tr.setMeta("needsPagination", true)
     }
 
     dispatch(tr)
@@ -555,6 +563,9 @@ const KeymapPlugin = keymap({
     } else {
       setSelectionAtPos(tr, thisPos)
     }
+
+    // Sofortige Paginierung auslösen
+    tr.setMeta("needsPagination", true)
 
     dispatch(tr)
     return true

@@ -32,8 +32,13 @@ import { isPageNode } from "./nodes/page/page"
 import { isHeaderFooterNode } from "./nodes/headerFooter/headerFooter"
 import { isBodyNode } from "./nodes/body/body"
 import type { Editor } from "@tiptap/core"
+import { TextSelection } from "@tiptap/pm/state"
 
-// Update the function signature to accept a single parameter object
+// Konstanten für die Paginierung
+const PAGING_BUFFER = 20 // Größerer Puffer für proaktivere Paginierung
+const CURSOR_MAPPING_ATTEMPTS = 3 // Anzahl der Versuche für die Cursor-Zuordnung
+
+// Vollständig überarbeitete buildPageView-Funktion
 export const buildPageView = ({
   editor,
   view,
@@ -47,26 +52,47 @@ export const buildPageView = ({
   const { doc } = state
 
   try {
+    // Speichern der aktuellen Cursor-Position und Selektion
+    const { tr, selection } = state
+    const oldCursorPos = selection.from
+    const oldCursorAnchor = selection.anchor
+    const oldCursorHead = selection.head
+
+    // Sammeln und Messen der Inhaltsknoten
     const contentNodes = collectContentNodes(doc)
     const nodeHeights = measureNodeHeights(view, contentNodes)
 
-    // Record the cursor's old position
-    const { tr, selection } = state
-    const oldCursorPos = selection.from
+    // Erstellen des neuen Dokuments mit proaktiver Paginierung
+    const { newDoc, oldToNewPosMap } = buildNewDocument(editor, options, contentNodes, nodeHeights, PAGING_BUFFER)
 
-    const { newDoc, oldToNewPosMap } = buildNewDocument(editor, options, contentNodes, nodeHeights)
-
-    // Compare the content of the documents
+    // Vergleichen der Dokumente und Anwenden der Änderungen, wenn nötig
     if (!newDoc.content.eq(doc.content)) {
+      // Ersetzen des Dokuments
       tr.replaceWith(0, doc.content.size, newDoc.content)
       tr.setMeta("pagination", true)
 
       const newDocContentSize = newDoc.content.size
-      const newCursorPos = mapCursorPosition(contentNodes, oldCursorPos, oldToNewPosMap, newDocContentSize)
-      paginationUpdateCursorPosition(tr, newCursorPos)
-    }
 
-    dispatch(tr)
+      // Verbesserte Cursor-Zuordnung mit mehreren Versuchen
+      let newCursorPos = null
+      for (let attempt = 0; attempt < CURSOR_MAPPING_ATTEMPTS; attempt++) {
+        newCursorPos = mapCursorPosition(contentNodes, oldCursorPos, oldToNewPosMap, newDocContentSize)
+        if (newCursorPos !== null) break
+
+        // Wenn die direkte Zuordnung fehlschlägt, versuchen wir es mit benachbarten Positionen
+        if (attempt === 0) {
+          newCursorPos = mapCursorPosition(contentNodes, oldCursorPos - 1, oldToNewPosMap, newDocContentSize)
+        } else if (attempt === 1) {
+          newCursorPos = mapCursorPosition(contentNodes, oldCursorPos + 1, oldToNewPosMap, newDocContentSize)
+        }
+      }
+
+      // Anwenden der Cursor-Position
+      enhancedCursorPositioning(tr, newCursorPos, oldCursorAnchor, oldCursorHead)
+
+      // Dispatch der Transaktion
+      dispatch(tr)
+    }
   } catch (error) {
     console.error("Error updating page view. Details:", error)
   }
@@ -149,8 +175,8 @@ const measureNodeHeights = (view: EditorView, contentNodes: NodePosArray): numbe
         }
       }
 
-      // We use top margin only because there is overlap of margins between paragraphs
-      return height + marginTop
+      // Fügen Sie einen kleinen Puffer hinzu, um sicherzustellen, dass wir genug Platz haben
+      return (height + marginTop) * 1.05 // 5% Puffer
     }
 
     return MIN_PARAGRAPH_HEIGHT // Default to minimum height if DOM element is not found
@@ -166,6 +192,7 @@ const measureNodeHeights = (view: EditorView, contentNodes: NodePosArray): numbe
  * @param options - The pagination options.
  * @param contentNodes - The content nodes and their positions.
  * @param nodeHeights - The heights of the content nodes.
+ * @param pagingBuffer - Buffer space to trigger pagination earlier.
  * @returns {newDoc: PMNode, oldToNewPosMap: CursorMap} The new document and the mapping from old positions to new positions.
  */
 const buildNewDocument = (
@@ -173,6 +200,7 @@ const buildNewDocument = (
   options: PaginationOptions,
   contentNodes: NodePosArray,
   nodeHeights: number[],
+  pagingBuffer = 0,
 ): { newDoc: PMNode; oldToNewPosMap: CursorMap } => {
   const { schema, doc } = editor.state
   const { pageAmendmentOptions } = options
@@ -242,11 +270,22 @@ const buildNewDocument = (
     bodyOffset = 1
   let cumulativeNewDocPos = pageOffset + getMaybeNodeSize(currentPageHeader) + bodyOffset
 
+  // Verbesserte Paginierungslogik mit Vorausschau
   for (let i = 0; i < contentNodes.length; i++) {
     const { node, pos: oldPos } = contentNodes[i]
     const nodeHeight = nodeHeights[i]
 
-    const isPageFull = currentHeight + nodeHeight > bodyPixelDimensions.bodyHeight
+    // Vorausschau: Prüfen, ob der aktuelle Knoten plus der nächste Knoten auf die Seite passen würde
+    const nextNodeHeight = i < contentNodes.length - 1 ? nodeHeights[i + 1] : 0
+    const wouldExceedWithNextNode =
+      currentHeight + nodeHeight + nextNodeHeight > bodyPixelDimensions.bodyHeight - pagingBuffer
+
+    // Proaktivere Paginierung: Neue Seite beginnen, wenn der aktuelle Knoten nicht passt oder
+    // wenn der aktuelle plus der nächste Knoten nicht passen würden
+    const isPageFull =
+      currentHeight + nodeHeight > bodyPixelDimensions.bodyHeight - pagingBuffer ||
+      (wouldExceedWithNextNode && nodeHeight < bodyPixelDimensions.bodyHeight * 0.5) // Nur wenn der aktuelle Knoten nicht zu groß ist
+
     if (isPageFull && currentPageContent.length > 0) {
       const pageNode = addPage(currentPageContent)
       cumulativeNewDocPos += pageNode.nodeSize - getMaybeNodeSize(currentPageHeader)
@@ -318,8 +357,13 @@ const mapCursorPosition = (
   oldCursorPos: number,
   oldToNewPosMap: CursorMap,
   newDocContentSize: number,
-) => {
-  let newCursorPos: Nullable<number> = null
+): Nullable<number> => {
+  // Direkte Zuordnung, wenn die Position in der Map ist
+  if (oldToNewPosMap.has(oldCursorPos)) {
+    return oldToNewPosMap.get(oldCursorPos)!
+  }
+
+  // Suche nach dem Knoten, der die Position enthält
   for (let i = 0; i < contentNodes.length; i++) {
     const { node, pos: oldNodePos } = contentNodes[i]
     const nodeSize = node.nodeSize
@@ -329,22 +373,35 @@ const mapCursorPosition = (
       const newNodePos = oldToNewPosMap.get(oldNodePos)
       if (newNodePos === undefined) {
         console.error("Unable to determine new node position from cursor map!")
-        newCursorPos = 0
+        return 0
       } else {
-        newCursorPos = Math.min(newNodePos + offsetInNode, newDocContentSize - 1)
+        return Math.min(newNodePos + offsetInNode, newDocContentSize - 1)
       }
-
-      break
     }
   }
 
-  return newCursorPos
+  // Wenn keine direkte Zuordnung gefunden wurde, suchen wir nach der nächstgelegenen Position
+  let closestOldPos = -1
+  let minDistance = Number.POSITIVE_INFINITY
+
+  for (const oldPos of oldToNewPosMap.keys()) {
+    const distance = Math.abs(oldPos - oldCursorPos)
+    if (distance < minDistance) {
+      minDistance = distance
+      closestOldPos = oldPos
+    }
+  }
+
+  if (closestOldPos !== -1) {
+    return oldToNewPosMap.get(closestOldPos)!
+  }
+
+  return null
 }
 
 /**
  * Check if the given position is at the start of a text block.
  *
- * @param doc - The document node.
  * @param $pos - The resolved position in the document.
  * @returns {boolean} True if the position is at the start of a text block, false otherwise.
  */
@@ -355,7 +412,6 @@ const isNodeBeforeAvailable = ($pos: ResolvedPos): boolean => {
 /**
  * Check if the given position is at the end of a text block.
  *
- * @param doc - The document node.
  * @param $pos - The resolved position in the document.
  * @returns {boolean} True if the position is at the end of a text block, false otherwise.
  */
@@ -364,29 +420,74 @@ const isNodeAfterAvailable = ($pos: ResolvedPos): boolean => {
 }
 
 /**
- * Sets the cursor selection after creating the new document.
+ * Enhanced cursor positioning with multiple fallback strategies
  *
- * @param tr - The current transaction.
- * @returns {void}
+ * @param tr - The transaction to update
+ * @param newCursorPos - The mapped new cursor position
+ * @param oldCursorPos - The original cursor position
+ * @param oldCursorAnchor - The original selection anchor
+ * @param oldCursorHead - The original selection head
  */
-const paginationUpdateCursorPosition = (tr: Transaction, newCursorPos: Nullable<number>): void => {
+const enhancedCursorPositioning = (
+  tr: Transaction,
+  newCursorPos: Nullable<number>,
+  oldCursorAnchor: number,
+  oldCursorHead: number,
+): void => {
   if (newCursorPos !== null) {
-    const $pos = tr.doc.resolve(newCursorPos)
-    let selection
+    try {
+      const $pos = tr.doc.resolve(newCursorPos)
+      let selection
 
-    if ($pos.parent.isTextblock || isNodeBeforeAvailable($pos) || isNodeAfterAvailable($pos)) {
-      selection = moveToThisTextBlock(tr, $pos)
-    } else {
-      selection = moveToNearestValidCursorPosition($pos)
-    }
+      // Strategie 1: Versuchen, die Position im Textblock zu verwenden
+      if ($pos.parent.isTextblock || isNodeBeforeAvailable($pos) || isNodeAfterAvailable($pos)) {
+        selection = moveToThisTextBlock(tr, $pos)
+      }
+      // Strategie 2: Nächstgelegene gültige Position finden
+      else {
+        selection = moveToNearestValidCursorPosition($pos)
+      }
 
-    if (selection) {
-      setSelection(tr, selection)
-    } else {
-      // Fallback to a safe selection at the end of the document
+      // Wenn eine Selektion gefunden wurde, anwenden
+      if (selection) {
+        setSelection(tr, selection)
+        return
+      }
+
+      // Strategie 3: Versuchen, die alte Selektion wiederherzustellen
+      if (oldCursorAnchor !== oldCursorHead) {
+        // Es war eine Bereichsauswahl
+        const newAnchor = mapCursorPosition(
+          [],
+          oldCursorAnchor,
+          new Map([[oldCursorAnchor, newCursorPos]]),
+          tr.doc.content.size,
+        )
+        const newHead = mapCursorPosition(
+          [],
+          oldCursorHead,
+          new Map([[oldCursorHead, newCursorPos]]),
+          tr.doc.content.size,
+        )
+
+        if (newAnchor !== null && newHead !== null) {
+          // Erstellen einer TextSelection mit Anker und Kopf
+          const textSelection = TextSelection.create(tr.doc, newAnchor, newHead)
+          tr.setSelection(textSelection)
+          return
+        }
+      }
+
+      // Strategie 4: Einfach die neue Position verwenden
+      const textSelection = TextSelection.create(tr.doc, newCursorPos)
+      tr.setSelection(textSelection)
+    } catch (error) {
+      console.error("Error setting cursor position:", error)
+      // Fallback zu einer sicheren Auswahl am Ende des Dokuments
       setSelectionAtEndOfDocument(tr)
     }
   } else {
+    // Wenn keine neue Position gefunden wurde, zum Ende des Dokuments gehen
     setSelectionAtEndOfDocument(tr)
   }
 }
